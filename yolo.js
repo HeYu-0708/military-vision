@@ -91,11 +91,14 @@
     if (!res.ok) throw new Error(`找不到模型檔 ${url}（HTTP ${res.status}）`);
     const total = +res.headers.get('content-length') || 0;
     if (!res.body || !total) return new Uint8Array(await res.arrayBuffer());
-    const reader = res.body.getReader(), buf = new Uint8Array(total); let got = 0;
+    // 伺服器可能壓縮傳送（例如 GitHub Pages），content-length 會比實際資料小，所以先收集再合併
+    const reader = res.body.getReader(), chunks = []; let got = 0;
     for (;;) {
       const { done, value } = await reader.read(); if (done) break;
-      buf.set(value, got); got += value.length; onProgress && onProgress(got, total);
+      chunks.push(value); got += value.length; onProgress && onProgress(Math.min(got, total), total);
     }
+    const buf = new Uint8Array(got); let off = 0;
+    for (const c of chunks) { buf.set(c, off); off += c.length; }
     return buf;
   }
 
@@ -120,8 +123,8 @@
       for (const u of urls) { const h = await fetch(u, { method: 'HEAD' }); sizes.push(+h.headers.get('content-length') || 0); }
       total = sizes.reduce((a, c) => a + c, 0); let done = 0;
       for (const u of urls) {
-        const c = await fetchWithProgress(u, (g) => onProgress && total && onProgress(done + g, total));
-        chunks.push(c); done += c.length; onProgress && total && onProgress(done, total);
+        const c = await fetchWithProgress(u, (g) => onProgress && total && onProgress(Math.min(done + g, total), total));
+        chunks.push(c); done += c.length; onProgress && total && onProgress(Math.min(done, total), total);
       }
       bytes = new Uint8Array(chunks.reduce((a, c) => a + c.length, 0));
       let off = 0; for (const c of chunks) { bytes.set(c, off); off += c.length; }
