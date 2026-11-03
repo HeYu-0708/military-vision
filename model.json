@@ -1,0 +1,9 @@
+{
+  "name": "YOLO11m v2",
+  "file": "best.onnx",
+  "input": 800,
+  "conf": 0.4,
+  "trained": "2025-11-20",
+  "note": "接續 v1 再訓練 40 輪，輸入 800、copy_paste 0.5。換模型時改這個檔案：input 要跟匯出時的 imgsz 一樣，conf 是網站預設的信心度門檻。",
+  "parts": 9
+}

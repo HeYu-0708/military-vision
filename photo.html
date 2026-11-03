@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Military Vision 照片辨識</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* 版面：左邊大畫面放照片與偵測框，右邊一欄放結果與門檻設定 */
+  :root{
+    --deep:#07121a;     /* 底色 */
+    --panel:#0c1b25;    /* 面板 */
+    --line:#1d3442;     /* 分隔、外框 */
+    --scan:#63e6c4;     /* 主要強調 */
+    --text:#d6efe9;
+    --dim:#7ea4ab;
+    --warn:#e0564a;     /* 需人工確認 */
+    --mono:"IBM Plex Mono", ui-monospace, Menlo, monospace;
+    --body:"Noto Sans TC", system-ui, sans-serif;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  [hidden]{display:none!important}
+  html,body{background:var(--deep);color:var(--text)}
+  body{font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;
+       padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 48px}
+  a{color:inherit;text-decoration:none}
+  button{font:inherit;color:inherit}
+  :focus-visible{outline:2px solid var(--scan);outline-offset:3px}
+  .wrap{max-width:1360px;margin:0 auto;display:grid;gap:20px}
+
+  /* 標題列 */
+  .head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px;padding-top:12px}
+  .head h1{font-size:clamp(1.5rem,2.6vw,2rem);font-weight:700;letter-spacing:.06em;text-wrap:balance}
+  .head p{color:var(--dim);max-width:46em}
+  .model{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:.78rem;color:var(--dim);
+         border:1px solid var(--line);background:var(--panel);padding:8px 12px;min-width:0}
+  .model i{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:none}
+  .model[data-state="ready"] i{background:var(--scan);box-shadow:0 0 8px var(--scan)}
+  .model[data-state="error"] i{background:var(--warn)}
+  .model b{color:var(--text);font-weight:500}
+  .prog{width:90px;height:3px;background:var(--line);flex:none}
+  .prog span{display:block;height:100%;width:0;background:var(--scan)}
+
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
+
+  /* 照片畫面 */
+  .stage{position:relative;border:1px solid var(--line);background:#040b10;min-height:420px;display:grid;place-items:center;overflow:hidden}
+  .stage canvas{display:block;max-width:100%;height:auto}
+  .stage.drag{border-color:var(--scan);background:#06161c}
+  .drop{display:grid;justify-items:center;gap:14px;padding:48px 24px;text-align:center}
+  .drop svg{width:44px;height:44px;color:var(--scan)}
+  .drop strong{font-size:1.1rem;font-weight:500}
+  .drop span{color:var(--dim);font-size:.9rem}
+  .busy{position:absolute;inset:0;display:grid;place-items:center;background:rgba(4,11,16,.55);font-family:var(--mono);font-size:.85rem;letter-spacing:.12em;color:var(--scan)}
+  .busy::after{content:"";position:absolute;left:0;right:0;height:2px;background:var(--scan);box-shadow:0 0 12px var(--scan);animation:sweep 1.2s linear infinite}
+  @keyframes sweep{from{top:0}to{top:100%}}
+
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;border:1px solid var(--line);background:transparent;cursor:pointer;font-size:.92rem;white-space:nowrap}
+  .btn:hover{border-color:var(--dim)}
+  .btn-primary{background:var(--scan);border-color:var(--scan);color:var(--deep);font-weight:500}
+  .btn-primary:hover{background:var(--text);border-color:var(--text)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+
+  .under{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:12px}
+  .thumbs{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .thumbs small{color:var(--dim);font-size:.82rem;margin-right:4px}
+  .thumb{width:64px;height:44px;border:1px solid var(--line);background:#000 center/cover no-repeat;cursor:pointer;padding:0}
+  .thumb[aria-pressed="true"]{border-color:var(--scan);box-shadow:0 0 0 1px var(--scan)}
+
+  /* 結果面板 */
+  .side{display:grid;gap:14px}
+  .card{border:1px solid var(--line);background:var(--panel)}
+  .card h2{font-size:.82rem;font-weight:500;color:var(--dim);padding:10px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+  .card h2 b{font-family:var(--mono);font-weight:500;color:var(--text)}
+  .sum{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line)}
+  .sum div{padding:12px 14px}
+  .sum div+div{border-left:1px solid var(--line)}
+  .sum b{display:block;font-family:var(--mono);font-size:1.7rem;font-weight:500;line-height:1.1;font-variant-numeric:tabular-nums}
+  .sum span{font-size:.8rem;color:var(--dim)}
+  .counts{list-style:none;padding:8px 14px 12px;display:grid;gap:6px}
+  .counts li{display:grid;grid-template-columns:10px 1fr auto;align-items:center;gap:10px;font-size:.9rem}
+  .counts li i{width:10px;height:10px}
+  .counts li small{color:var(--dim);font-family:var(--mono);font-size:.74rem;margin-left:6px}
+  .counts li b{font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums}
+  .counts li.zero{opacity:.38}
+
+  .dets{list-style:none;max-height:260px;overflow:auto}
+  .dets li{display:grid;grid-template-columns:10px 1fr auto;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--line);font-size:.88rem;cursor:default}
+  .dets li:first-child{border-top:0}
+  .dets li:hover,.dets li.on{background:rgba(99,230,196,.06)}
+  .dets li i{width:10px;height:10px}
+  .dets li span small{display:block;color:var(--dim);font-family:var(--mono);font-size:.72rem}
+  .dets li b{font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums}
+  .dets .flag{font-style:normal;font-size:.7rem;color:var(--warn);border:1px solid var(--warn);padding:0 5px;margin-left:6px;vertical-align:1px}
+  .empty{padding:14px;color:var(--dim);font-size:.88rem}
+
+  .ctrl{padding:12px 14px;display:grid;gap:14px}
+  .ctrl label{display:grid;gap:6px;font-size:.88rem}
+  .ctrl label span{display:flex;justify-content:space-between}
+  .ctrl label output{font-family:var(--mono);color:var(--scan)}
+  .ctrl label small{color:var(--dim);font-size:.78rem;line-height:1.5}
+  .ctrl input[type=range]{width:100%;accent-color:var(--scan)}
+  .ctrl .row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:.88rem}
+  .ctrl .row input{accent-color:var(--scan);width:16px;height:16px}
+
+  .msg{border:1px solid var(--warn);color:var(--text);background:rgba(224,86,74,.08);padding:12px 14px;font-size:.9rem}
+
+  @media (max-width:980px){ .grid{grid-template-columns:1fr} .stage{min-height:300px} }
+  @media (prefers-reduced-motion:reduce){ .busy::after{animation:none;top:50%} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="sn" data-current="photo"></header>
+
+  <section class="head">
+    <div>
+      <h1>照片辨識</h1>
+      <p>上傳照片，模型會標出戰機、軍用車輛、人員、戰車與戰艦，並統計各類數量。照片只在這台電腦上處理，不會上傳到任何地方。</p>
+    </div>
+    <div class="model" id="model" data-state="loading" role="status">
+      <i></i><span id="modelText">正在載入模型</span><div class="prog" id="prog"><span></span></div>
+    </div>
+  </section>
+
+  <div class="msg" id="err" hidden></div>
+
+  <div class="grid">
+    <div>
+      <div class="stage" id="stage">
+        <div class="drop" id="drop">
+          <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 16V8h8M32 8h8v8M40 32v8h-8M16 40H8v-8"/><path d="M24 30V16m-6 6l6-6 6 6"/></svg>
+          <strong>把照片拖到這裡</strong>
+          <span>也可以直接貼上（Ctrl / ⌘ + V），或</span>
+          <button class="btn btn-primary" type="button" id="pick">選擇照片</button>
+        </div>
+        <canvas id="cv" hidden aria-label="辨識結果"></canvas>
+        <div class="busy" id="busy" hidden>辨識中</div>
+      </div>
+      <input type="file" id="file" accept="image/*" multiple hidden>
+
+      <div class="under">
+        <div class="thumbs" id="thumbs"><small>範例</small></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" type="button" id="pick2">選擇照片</button>
+          <button class="btn" type="button" id="save" disabled>下載標註圖</button>
+        </div>
+      </div>
+    </div>
+
+    <aside class="side">
+      <section class="card" aria-label="辨識結果">
+        <h2>辨識結果 <b id="fname">—</b></h2>
+        <div class="sum">
+          <div><b id="total">0</b><span>偵測到的目標</span></div>
+          <div><b id="ms">—</b><span>推論時間（毫秒）</span></div>
+        </div>
+        <ul class="counts" id="counts"></ul>
+      </section>
+
+      <section class="card" aria-label="目標清單">
+        <h2>目標清單 <span>依信心度排序</span></h2>
+        <ul class="dets" id="dets"><li class="empty">還沒有照片。選一張照片或點範例照片開始。</li></ul>
+      </section>
+
+      <section class="card" aria-label="門檻設定">
+        <h2>門檻設定 <span>調整後立即更新</span></h2>
+        <div class="ctrl">
+          <label for="conf"><span>信心度門檻 <output id="confV">0.40</output></span>
+            <input type="range" id="conf" min="0.05" max="0.95" step="0.05" value="0.4">
+            <small>低於這個信心度的結果不顯示。調高會減少誤判，但也會漏掉更多目標。</small></label>
+          <label for="iou"><span>重疊框合併門檻（IoU）<output id="iouV">0.45</output></span>
+            <input type="range" id="iou" min="0.1" max="0.9" step="0.05" value="0.45">
+            <small>同類別的兩個框重疊超過這個比例時，只保留信心度較高的。調高會留下較多重疊的框。</small></label>
+          <div class="row"><span>信心度低於 0.6 標示「需確認」</span><input type="checkbox" id="flag" checked></div>
+          <div class="row"><span>框上顯示類別與信心度</span><input type="checkbox" id="labels" checked></div>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script src="nav.js"></script>
+<script src="yolo.js"></script>
+<script src="log.js"></script>
+<script>
+(() => {
+  const Y = window.MV_YOLO;
+  const $ = id => document.getElementById(id);
+  const LOW = 0.6;
+  const SAMPLES = [
+    { src: 'tank.jpg', name: '戰車範例' },
+    { src: 'mrap.jpg', name: '軍用車輛範例' },
+    { src: 'jet.jpg',  name: '戰機範例' },
+    { src: 'ship.jpg', name: '戰艦範例' },
+  ];
+  const items = [];          // { name, img, url, raw, ms }
+  let cur = -1, ready = false, hover = -1, dets = [];
+
+  /* ---------- 模型載入 ---------- */
+  const setModel = (state, html) => { $('model').dataset.state = state; $('modelText').innerHTML = html; };
+  const mb = b => (b / 1048576).toFixed(0);
+  Y.load('best.onnx', (got, total) => {
+    $('prog').firstElementChild.style.width = (got / total * 100).toFixed(1) + '%';
+    setModel('loading', `正在載入模型 ${mb(got)} / ${mb(total)} MB`);
+  }).then(({ backend, info }) => {
+    ready = true; $('prog').hidden = true;
+    setModel('ready', `<b>${info.name}</b> · ${backend === 'webgpu' ? 'WebGPU' : 'WASM（CPU）'} · 已就緒`);
+    // 預設門檻跟著模型設定（model.json 的 conf）
+    if (info.conf) { $('conf').value = info.conf; $('confV').textContent = (+info.conf).toFixed(2); }
+    if (cur >= 0) run(cur);
+  }).catch(e => {
+    $('prog').hidden = true; setModel('error', '模型載入失敗');
+    showErr(e.message.includes('onnxruntime') || e.message.includes('無法載入')
+      ? '無法載入辨識引擎。請確認電腦有連上網路；若要離線展示，請把 onnxruntime-web 的檔案放到 ort 資料夾。'
+      : e.message.includes('找不到模型') ? '找不到 best.onnx。請把模型檔放到網站資料夾裡的 models 資料夾。' : e.message);
+  });
+  function showErr(t) { $('err').textContent = t; $('err').hidden = false; }
+
+  /* ---------- 加入照片 ---------- */
+  function addFromUrl(url, name, select = true, thumb = true) {
+    return new Promise((ok, fail) => {
+      const img = new Image();
+      img.onload = () => { items.push({ name, img, url }); if (thumb) addThumb(items.length - 1); if (select) choose(items.length - 1); ok(); };
+      img.onerror = () => { showErr(`無法讀取「${name}」，請確認是圖片檔（JPG、PNG、WebP）。`); fail(); };
+      img.src = url;
+    });
+  }
+  function addFiles(list) {
+    const files = [...list].filter(f => f.type.startsWith('image/'));
+    if (!files.length) { showErr('沒有可用的圖片檔。請選 JPG、PNG 或 WebP 格式的照片。'); return; }
+    $('err').hidden = true;
+    files.forEach((f, i) => addFromUrl(URL.createObjectURL(f), f.name, i === 0));
+  }
+  function addThumb(i) {
+    const b = document.createElement('button');
+    b.className = 'thumb'; b.type = 'button'; b.style.backgroundImage = `url("${items[i].url}")`;
+    b.setAttribute('aria-label', items[i].name); b.setAttribute('aria-pressed', 'false'); b.dataset.src = items[i].url;
+    b.onclick = () => choose(i);
+    $('thumbs').appendChild(b);
+  }
+  // 範例照片先放縮圖，點了才載入
+  SAMPLES.forEach(s => {
+    const b = document.createElement('button');
+    b.className = 'thumb'; b.type = 'button'; b.style.backgroundImage = `url("${s.src}")`;
+    b.setAttribute('aria-label', s.name); b.setAttribute('aria-pressed', 'false'); b.dataset.src = s.src;
+    b.onclick = () => {
+      const at = items.findIndex(it => it.url === s.src);
+      if (at >= 0) return choose(at);
+      addFromUrl(s.src, s.name, true, false);
+    };
+    $('thumbs').appendChild(b);
+  });
+
+  $('pick').onclick = $('pick2').onclick = () => $('file').click();
+  $('file').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
+  const stage = $('stage');
+  ['dragenter', 'dragover'].forEach(t => stage.addEventListener(t, e => { e.preventDefault(); stage.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach(t => stage.addEventListener(t, e => { e.preventDefault(); stage.classList.remove('drag'); }));
+  stage.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+  document.addEventListener('paste', e => { const f = [...e.clipboardData.files]; if (f.length) addFiles(f); });
+
+  /* ---------- 辨識 ---------- */
+  function choose(i) {
+    cur = i; hover = -1;
+    [...$('thumbs').querySelectorAll('.thumb')].forEach(b => b.setAttribute('aria-pressed', b.dataset.src === items[i].url));
+    $('drop').hidden = true; $('cv').hidden = false; $('fname').textContent = items[i].name;
+    if (items[i].raw) render(); else { draw([]); run(i); }
+  }
+  async function run(i) {
+    if (!ready) { $('busy').hidden = false; $('busy').textContent = '等待模型載入'; return; }
+    const it = items[i];
+    $('busy').hidden = false; $('busy').textContent = '辨識中';
+    await new Promise(r => requestAnimationFrame(() => setTimeout(r)));   // 讓「辨識中」先畫出來
+    try {
+      const { out, meta, ms } = await Y.infer(it.img, it.img.naturalWidth, it.img.naturalHeight);
+      it.raw = { out, meta }; it.ms = ms;
+      // 存一筆辨識紀錄（用當下的門檻）給統計分析頁
+      const d0 = Y.decode(out, meta, +$('conf').value, +$('iou').value);
+      MV_LOG.add({ type: 'photo', name: it.name, counts: Y.CLASSES.map((_, k) => d0.filter(d => d.cls === k).length),
+        review: d0.filter(d => d.conf < LOW).length, ms: Math.round(ms), backend: Y.backend, conf: +$('conf').value,
+        confs: d0.map(d => +d.conf.toFixed(3)) });
+    } catch (e) { showErr('辨識時發生錯誤：' + e.message); }
+    $('busy').hidden = true;
+    if (cur === i) render();
+  }
+
+  /* ---------- 畫面與結果 ---------- */
+  function render() {
+    const it = items[cur]; if (!it || !it.raw) return;
+    dets = Y.decode(it.raw.out, it.raw.meta, +$('conf').value, +$('iou').value);
+    draw(dets);
+    $('total').textContent = dets.length;
+    $('ms').textContent = it.ms ? Math.round(it.ms) : '—';
+    $('counts').innerHTML = Y.CLASSES.map((c, k) => {
+      const n = dets.filter(d => d.cls === k).length;
+      return `<li class="${n ? '' : 'zero'}"><i style="background:${c.color}"></i><span>${c.zh}<small>${c.name}</small></span><b>${n}</b></li>`;
+    }).join('');
+    const flag = $('flag').checked;
+    $('dets').innerHTML = dets.length ? dets.map((d, k) =>
+      `<li data-k="${k}"><i style="background:${d.color}"></i><span>${d.zh}${flag && d.conf < LOW ? '<em class="flag">需確認</em>' : ''}<small>${d.name} · ${Math.round(d.w)}×${Math.round(d.h)} px</small></span><b>${(d.conf * 100).toFixed(0)}%</b></li>`).join('')
+      : '<li class="empty">這張照片沒有偵測到目標。可以試著調低信心度門檻。</li>';
+    $('save').disabled = false;
+  }
+
+  function paint(ctx, img, list, scale, hi) {
+    ctx.drawImage(img, 0, 0, img.naturalWidth * scale, img.naturalHeight * scale);
+    const lw = Math.max(2, Math.round(Math.max(ctx.canvas.width, ctx.canvas.height) / 450));
+    const fs = Math.max(12, Math.round(Math.max(ctx.canvas.width, ctx.canvas.height) / 60));
+    ctx.font = `600 ${fs}px "IBM Plex Mono", ui-monospace, monospace`; ctx.textBaseline = 'middle';
+    const flag = $('flag').checked, labels = $('labels').checked;
+    list.forEach((d, k) => {
+      const x = d.x * scale, y = d.y * scale, w = d.w * scale, h = d.h * scale;
+      const low = flag && d.conf < LOW;
+      ctx.globalAlpha = hi < 0 || hi === k ? 1 : .25;
+      ctx.strokeStyle = d.color; ctx.lineWidth = hi === k ? lw * 1.8 : lw;
+      ctx.setLineDash(low ? [lw * 4, lw * 3] : []); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+      if (labels) {
+        const t = `${d.name} ${d.conf.toFixed(2)}${low ? ' ?' : ''}`, tw = ctx.measureText(t).width + fs * .8, th = fs * 1.5;
+        const ly = y - th < 0 ? y : y - th;
+        ctx.fillStyle = d.color; ctx.fillRect(x, ly, tw, th);
+        ctx.fillStyle = d.ink; ctx.fillText(t, x + fs * .4, ly + th / 2 + 1);
+      }
+    });
+    ctx.globalAlpha = 1;
+  }
+  function draw(list) {
+    const it = items[cur], cv = $('cv'), img = it.img;
+    const maxW = stage.clientWidth - 2, maxH = Math.max(420, innerHeight * .72);
+    const s = Math.min(1, maxW / img.naturalWidth, maxH / img.naturalHeight);
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    cv.width = Math.round(img.naturalWidth * s * dpr); cv.height = Math.round(img.naturalHeight * s * dpr);
+    cv.style.width = Math.round(img.naturalWidth * s) + 'px';
+    const ctx = cv.getContext('2d'); paint(ctx, img, list, s * dpr, hover);
+  }
+
+  // 滑鼠移到清單或框上時，強調那一個目標
+  $('dets').addEventListener('pointerover', e => { const li = e.target.closest('li[data-k]'); setHover(li ? +li.dataset.k : -1); });
+  $('dets').addEventListener('pointerleave', () => setHover(-1));
+  $('cv').addEventListener('pointermove', e => {
+    const it = items[cur]; if (!it || !dets.length) return;
+    const r = $('cv').getBoundingClientRect(), s = r.width / it.img.naturalWidth;
+    const mx = (e.clientX - r.left) / s, my = (e.clientY - r.top) / s;
+    const hit = dets.map((d, k) => ({ d, k })).filter(({ d }) => mx >= d.x && mx <= d.x + d.w && my >= d.y && my <= d.y + d.h)
+                    .sort((a, b) => a.d.w * a.d.h - b.d.w * b.d.h)[0];
+    setHover(hit ? hit.k : -1);
+  });
+  $('cv').addEventListener('pointerleave', () => setHover(-1));
+  function setHover(k) {
+    if (k === hover) return; hover = k; draw(dets);
+    [...$('dets').children].forEach(li => li.classList.toggle('on', +li.dataset.k === k));
+  }
+
+  ['conf', 'iou'].forEach(id => $(id).addEventListener('input', () => { $(id + 'V').textContent = (+$(id).value).toFixed(2); render(); }));
+  ['flag', 'labels'].forEach(id => $(id).addEventListener('change', render));
+  addEventListener('resize', () => { if (cur >= 0 && items[cur].raw) draw(dets); });
+
+  // 下載原尺寸的標註圖
+  $('save').onclick = () => {
+    const it = items[cur]; if (!it) return;
+    const c = document.createElement('canvas'); c.width = it.img.naturalWidth; c.height = it.img.naturalHeight;
+    paint(c.getContext('2d'), it.img, dets, 1, -1);
+    c.toBlob(b => {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(b);
+      a.download = it.name.replace(/\.[^.]+$/, '') + '_detected.jpg'; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    }, 'image/jpeg', .92);
+  };
+})();
+</script>
+</body>
+</html>

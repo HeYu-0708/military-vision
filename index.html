@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Military Vision</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* 版面：全版監控影片當封面，標題壓在左側，右下角一小塊即時統計 */
+  :root{
+    --deep:#07121a;     /* 夜間監控底色 */
+    --panel:rgba(8,22,31,.72);
+    --line:#1f3a48;     /* 外框、分隔 */
+    --scan:#63e6c4;     /* 掃描線、偵測框 */
+    --text:#d6efe9;     /* 主要文字 */
+    --dim:#7ea4ab;      /* 次要文字 */
+    --warn:#e0564a;     /* 需人工確認 */
+    --glitch-a:#ff3d6e; /* 故障效果的色偏 */
+    --glitch-b:#3ad7ff;
+    --title:"Chakra Petch", "Noto Sans TC", sans-serif;
+    --mono:"IBM Plex Mono", ui-monospace, Menlo, monospace;
+    --body:"Noto Sans TC", system-ui, sans-serif;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--deep);color:var(--text)}
+  body{font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  a{color:inherit;text-decoration:none}
+  :focus-visible{outline:2px solid var(--scan);outline-offset:3px}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+  /* ---------- 封面舞台 ---------- */
+  .cover{position:relative;height:100svh;min-height:620px;overflow:hidden;background:#000}
+  .cover video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+               filter:saturate(.7) contrast(1.06) brightness(.78) hue-rotate(-6deg)}
+  .cover canvas.boxes{position:absolute;inset:0;width:100%;height:100%}
+  .fx{position:absolute;inset:0;pointer-events:none;background:
+        repeating-linear-gradient(0deg, rgba(0,0,0,.2) 0 1px, transparent 1px 3px),
+        radial-gradient(ellipse at 60% 50%, transparent 45%, rgba(4,12,18,.8) 100%),
+        linear-gradient(90deg, rgba(7,18,26,.92) 0%, rgba(7,18,26,.6) 38%, rgba(7,18,26,0) 62%),
+        linear-gradient(rgba(10,40,55,.3), rgba(10,40,55,.3))}
+  .noise{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;opacity:.07;mix-blend-mode:screen}
+
+  .inner{width:100%;max-width:1360px;margin:0 auto}
+
+  /* ---------- 標題區 ---------- */
+  .copy{position:absolute;z-index:4;inset:0;display:flex;align-items:center;pointer-events:none;
+        padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+  .copy .inner{display:block}
+  .copy-col{max-width:min(640px,100%);pointer-events:auto}
+  .boot{font-family:var(--mono);font-size:.78rem;letter-spacing:.14em;color:var(--scan);min-height:1.6em;text-transform:uppercase}
+  .boot b{font-weight:500;color:var(--text)}
+  .title{position:relative;margin-top:10px}
+  .title canvas{display:block;width:100%;height:auto}
+  .zh{margin-top:8px;font-weight:700;font-size:clamp(1.25rem,2.3vw,1.75rem);letter-spacing:.42em;color:var(--text);opacity:0}
+  .desc{margin-top:18px;max-width:34em;color:var(--dim);font-size:clamp(.95rem,1.15vw,1.05rem);opacity:0}
+  .actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px;opacity:0}
+  .btn{display:inline-flex;align-items:center;gap:10px;padding:12px 22px;font-weight:500;font-size:.95rem;border:1px solid var(--line);transition:background .2s,border-color .2s,color .2s}
+  .btn-primary{background:var(--scan);border-color:var(--scan);color:var(--deep)}
+  .btn-primary:hover{background:var(--text);border-color:var(--text)}
+  .btn-ghost{background:rgba(7,18,26,.5)}
+  .btn-ghost:hover{border-color:var(--dim)}
+  .show{animation:flickerIn .7s steps(1) forwards}
+
+  /* ---------- 右下角即時統計 ---------- */
+  .stats{position:absolute;z-index:4;right:max(16px,env(safe-area-inset-right,0px),calc((100% - 1360px) / 2));bottom:calc(18px + env(safe-area-inset-bottom,0px));
+         width:248px;background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+         font-family:var(--mono);font-size:.74rem;opacity:0}
+  .stats header{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);color:var(--dim);letter-spacing:.1em}
+  .stats header b{color:var(--scan);font-weight:500}
+  .stats dl{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:10px 12px}
+  .stats dt{color:var(--dim);font-family:var(--body)}
+  .stats dd{text-align:right;font-variant-numeric:tabular-nums;color:var(--text)}
+  .stats dd.warn{color:var(--warn)}
+  .stats dd.lock{color:var(--scan)}
+  .stats .spark{display:block;width:100%;height:30px;border-top:1px solid var(--line)}
+  .credit{position:absolute;z-index:4;left:max(16px,env(safe-area-inset-left,0px),calc((100% - 1360px) / 2));bottom:calc(18px + env(safe-area-inset-bottom,0px));
+          font-family:var(--mono);font-size:.68rem;letter-spacing:.12em;color:var(--dim);opacity:.8}
+
+  @keyframes flickerIn{0%{opacity:0}12%{opacity:.6}20%{opacity:0}34%{opacity:.85}42%{opacity:.2}55%,100%{opacity:1}}
+
+  @media (max-width:860px){
+    .fx{background:
+        repeating-linear-gradient(0deg, rgba(0,0,0,.2) 0 1px, transparent 1px 3px),
+        linear-gradient(rgba(7,18,26,.55), rgba(7,18,26,.85))}
+    .copy{align-items:flex-start;padding-top:22svh}
+    .stats{left:max(16px,env(safe-area-inset-left,0px));width:auto}
+    .stats dl{grid-template-columns:repeat(4,auto);grid-auto-flow:column;grid-template-rows:auto auto;gap:2px 14px}
+    .stats dd{text-align:left;font-size:1rem}
+    .stats .spark{display:none}
+    .credit{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .show{animation:none;opacity:1}
+  }
+</style>
+</head>
+<body>
+
+<section class="cover" id="cover">
+  <video id="vid" src="patrol.mp4" muted loop playsinline autoplay preload="auto" aria-hidden="true"></video>
+  <canvas class="boxes" id="boxes" aria-hidden="true"></canvas>
+  <div class="fx"></div>
+  <canvas class="noise" id="noise" aria-hidden="true"></canvas>
+
+  <header class="sn" data-current="home" data-overlay></header>
+
+  <div class="copy">
+    <div class="inner">
+      <div class="copy-col">
+        <p class="boot" id="boot" aria-hidden="true"></p>
+        <h1 class="title">
+          <span class="sr">MILITARY VISION 軍事影像辨識</span>
+          <canvas id="titleCv" aria-hidden="true"></canvas>
+        </h1>
+        <p class="zh" id="zh" aria-hidden="true">軍事影像辨識</p>
+        <p class="desc" id="desc">以 YOLO 物件偵測結合多目標追蹤，從地面偵察畫面即時辨識戰車、裝甲車、軍人、戰機與戰艦。同一目標只計一次，並標出需要人工確認的結果。</p>
+        <div class="actions" id="actions">
+          <a class="btn btn-primary" href="live.html">開始辨識</a>
+          <a class="btn btn-ghost" href="eval.html">查看模型評估</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="stats" id="stats" aria-label="即時統計">
+    <header><span>LIVE · CAM-01</span><b id="tc">00:00</b></header>
+    <dl>
+      <dt>畫面中目標</dt><dd id="sNow">0</dd>
+      <dt>累計目標</dt><dd id="sTotal">0</dd>
+      <dt>需人工確認</dt><dd class="warn" id="sLow">0</dd>
+      <dt>鎖定</dt><dd class="lock" id="sLock">—</dd>
+    </dl>
+    <canvas class="spark" id="spark" aria-hidden="true"></canvas>
+  </aside>
+  <p class="credit">Footage · Pexels</p>
+</section>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const C = { scan: css('--scan'), text: css('--text'), warn: css('--warn'), deep: css('--deep'),
+              ga: css('--glitch-a'), gb: css('--glitch-b'), dim: css('--dim') };
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* =========================================================
+     1. 標題開機動畫：模糊、低透明、斷裂閃爍 → 穩定清晰
+     ========================================================= */
+  const tcv = $('titleCv'), tctx = tcv.getContext('2d');
+  const TEXT = ['MILITARY', 'VISION'];
+  let src = null, srcA = null, srcB = null, TW = 0, TH = 0, lines = [];
+
+  function buildSources() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const w = tcv.parentElement.clientWidth;
+    // 寬度夠就一行，不夠就兩行
+    const probe = document.createElement('canvas').getContext('2d');
+    let size = Math.min(w / 7.2, 112);
+    probe.font = `700 ${size}px ${css('--title')}`;
+    const one = probe.measureText(TEXT.join(' ')).width;
+    lines = one <= w ? [TEXT.join(' ')] : TEXT;
+    if (lines.length === 2) size = Math.min(w / 4.6, 96);
+    probe.font = `700 ${size}px ${css('--title')}`;
+    const widest = Math.max(...lines.map(l => probe.measureText(l).width));
+    if (widest > w) size *= w / widest;
+    const lh = size * 1.02;
+    TW = w; TH = Math.ceil(lh * lines.length + size * .18);
+    tcv.width = Math.round(TW * dpr); tcv.height = Math.round(TH * dpr);
+    tcv.style.height = TH + 'px';
+    const mk = color => {
+      const c = document.createElement('canvas'); c.width = tcv.width; c.height = tcv.height;
+      const x = c.getContext('2d'); x.scale(dpr, dpr);
+      x.font = `700 ${size}px ${css('--title')}`; x.textBaseline = 'top'; x.fillStyle = color;
+      if (color === C.text) { x.shadowColor = C.scan; x.shadowBlur = size * .18; }
+      lines.forEach((l, i) => x.fillText(l, 0, i * lh + size * .05));
+      return c;
+    };
+    src = mk(C.text); srcA = mk(C.ga); srcB = mk(C.gb);
+    tctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  const pix = document.createElement('canvas'), pctx = pix.getContext('2d');
+  // n: 0 = 完全穩定，1 = 最嚴重的干擾
+  function renderTitle(n, alpha) {
+    const W = tcv.width, H = tcv.height;
+    tctx.clearRect(0, 0, W, H);
+    if (!src) return;
+    let base = src;
+    // 像素破碎：先縮小再放大，n 越大方塊越粗
+    const block = Math.max(1, Math.round(1 + 26 * n * n));
+    if (block > 1) {
+      pix.width = Math.max(1, Math.ceil(W / block)); pix.height = Math.max(1, Math.ceil(H / block));
+      pctx.imageSmoothingEnabled = true;
+      pctx.clearRect(0, 0, pix.width, pix.height);
+      pctx.drawImage(src, 0, 0, pix.width, pix.height);
+      base = pix;
+    }
+    tctx.imageSmoothingEnabled = block <= 1;
+    tctx.globalAlpha = alpha;
+    tctx.filter = n > .02 ? `blur(${(n * 10).toFixed(1)}px)` : 'none';
+    // 水平斷裂：把字切成橫條，各自左右錯位
+    const slices = n > .02 ? 4 + Math.round(n * 14) : 1;
+    const sh = H / slices;
+    for (let s = 0; s < slices; s++) {
+      const shift = n > .02 && Math.random() < .25 + n * .6 ? (Math.random() - .5) * W * .12 * n : 0;
+      const sy = s * sh;
+      tctx.drawImage(base, 0, sy / H * base.height, base.width, sh / H * base.height, shift, sy, W, sh);
+    }
+    tctx.filter = 'none';
+    // RGB 色偏
+    if (n > .03) {
+      const off = 4 + 18 * n;
+      tctx.globalCompositeOperation = 'lighter';
+      tctx.globalAlpha = alpha * .55 * Math.min(1, n * 2.5);
+      tctx.drawImage(srcA, -off, (Math.random() - .5) * off * .4);
+      tctx.drawImage(srcB, off, (Math.random() - .5) * off * .4);
+      tctx.globalCompositeOperation = 'source-over';
+    }
+    tctx.globalAlpha = 1;
+    // 掉落的像素塊與雜訊點
+    if (n > .03) {
+      const holes = Math.round(n * 70);
+      for (let i = 0; i < holes; i++) {
+        const bw = 6 + Math.random() * 60 * n, bh = 2 + Math.random() * 10;
+        tctx.clearRect(Math.random() * W, Math.random() * H, bw, bh);
+      }
+      tctx.fillStyle = C.scan;
+      const dots = Math.round(n * 260);
+      for (let i = 0; i < dots; i++) tctx.fillRect(Math.random() * W, Math.random() * H, 2, 2);
+    }
+  }
+
+  // 開機文字
+  const bootLines = ['Initializing vision core', 'Loading detector · YOLO', 'Linking CAM-01', 'Target recognition'];
+  function typeBoot(done) {
+    const el = $('boot');
+    if (reduce) { el.innerHTML = '<b>System ready</b>'; return done(); }
+    let li = 0, ci = 0;
+    (function step() {
+      const line = bootLines[li];
+      el.textContent = line.slice(0, ci) + (ci % 2 ? '_' : '');
+      if (ci < line.length) { ci++; setTimeout(step, 18); }
+      else {
+        el.innerHTML = `${line} <b>OK</b>`;
+        li++; ci = 0;
+        if (li < bootLines.length) setTimeout(step, 160); else setTimeout(() => { el.innerHTML = 'Target recognition <b>Online</b>'; }, 300);
+        if (li === 1) done();   // 第二行開始時標題就開始浮現
+      }
+    })();
+  }
+
+  let titleStart = 0, nextBurst = 0, burstEnd = 0, booted = false;
+  function titleLoop(now) {
+    const DUR = 3200;
+    if (!titleStart) titleStart = now;
+    const p = Math.min(1, (now - titleStart) / DUR);
+    const ease = 1 - Math.pow(1 - p, 3);
+    let n = 1 - ease;
+    let alpha = .12 + .88 * ease;
+    // 斷裂閃爍：前段隨機瞬間熄滅或過亮
+    if (p < .85 && Math.random() < .22 * (1 - p)) alpha *= Math.random() * .3;
+    if (p >= 1) {
+      if (!booted) { booted = true; revealRest(); nextBurst = now + 4000 + Math.random() * 4000; }
+      // 穩定後偶爾小幅干擾，像訊號不穩
+      if (now > nextBurst) { burstEnd = now + 140 + Math.random() * 160; nextBurst = now + 5000 + Math.random() * 5000; }
+      n = now < burstEnd ? .14 + Math.random() * .12 : 0;
+      alpha = 1;
+    }
+    renderTitle(n, alpha);
+    requestAnimationFrame(titleLoop);
+  }
+
+  function revealRest() {
+    ['zh', 'desc', 'actions', 'stats'].forEach((id, i) =>
+      setTimeout(() => $(id).classList.add('show'), reduce ? 0 : i * 220));
+  }
+
+  document.fonts.load(`700 80px ${css('--title')}`).catch(() => {}).finally(() => {
+    buildSources();
+    new ResizeObserver(() => { buildSources(); }).observe(tcv.parentElement);
+    if (reduce) { renderTitle(0, 1); booted = true; revealRest(); typeBoot(() => {}); return; }
+    renderTitle(1, .1);
+    typeBoot(() => requestAnimationFrame(titleLoop));
+  });
+
+  /* =========================================================
+     2. 雜訊干擾層（低解析度，放大後鋪滿）
+     ========================================================= */
+  const ncv = $('noise'), nctx = ncv.getContext('2d');
+  ncv.width = 240; ncv.height = 135;
+  const img = nctx.createImageData(240, 135);
+  let nt = 0;
+  function noiseLoop(now) {
+    if (now - nt > 70) {
+      nt = now;
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = Math.random() * 255; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255;
+      }
+      nctx.putImageData(img, 0, 0);
+    }
+    requestAnimationFrame(noiseLoop);
+  }
+  if (!reduce) requestAnimationFrame(noiseLoop);
+
+  /* =========================================================
+     3. 背景影片上的偵測框（讀 tracks.json）
+     ========================================================= */
+  const vid = $('vid'), bcv = $('boxes'), bctx = bcv.getContext('2d');
+  const LOW = 0.6, SRC_SCALE = 3, MIN_FRAMES = 15;
+  let data = null, firstSeen = new Map(), counts = [];
+  let lockId = null, lostAt = 0, ret = null, scanY = 0, lastT = performance.now(), lastFrame = -1;
+
+  fetch('tracks.json').then(r => r.json()).then(d => {
+    data = d;
+    const n = new Map();
+    d.frames.forEach((fr, i) => fr.forEach(o => {
+      n.set(o[0], (n.get(o[0]) || 0) + 1);
+      if (!firstSeen.has(o[0])) firstSeen.set(o[0], i);
+    }));
+    for (const [id, c] of n) if (c < MIN_FRAMES) firstSeen.delete(id);
+    counts = d.frames.map(f => f.length);
+  });
+
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    bcv.width = Math.round(bcv.clientWidth * dpr); bcv.height = Math.round(bcv.clientHeight * dpr);
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const sp = $('spark'); sp.width = sp.clientWidth * dpr; sp.height = sp.clientHeight * dpr;
+  }
+  new ResizeObserver(resize).observe(bcv); resize();
+
+  function targetsAt(t) {
+    const f = t * data.fps, i = Math.min(Math.floor(f), data.frames.length - 1), a = f - i;
+    const next = new Map((data.frames[i + 1] || []).map(o => [o[0], o]));
+    return { i, list: data.frames[i].map(o => {
+      const nx = next.get(o[0]); const k = nx ? a : 0;
+      const L = j => o[j] + ((nx ? nx[j] : o[j]) - o[j]) * k;
+      return { id: o[0], x1: L(1), y1: L(2), x2: L(3), y2: L(4), conf: o[5], cls: o[6] ?? 2 };
+    })};
+  }
+const NAMES = ['aeroplane', 'military vehicle', 'person', 'tank', 'warship'];  // 本組模型的類別順序
+  const tag = id => 'SD-' + String(id).padStart(2, '0');
+
+  function corners(x, y, w, h, len, color) {
+    bctx.strokeStyle = color; bctx.lineWidth = 3; bctx.beginPath();
+    [[x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1]].forEach(([cx, cy, dx, dy]) => {
+      bctx.moveTo(cx, cy + dy * len); bctx.lineTo(cx, cy); bctx.lineTo(cx + dx * len, cy);
+    });
+    bctx.stroke();
+  }
+
+  function drawSpark(i) {
+    const sp = $('spark'), s = sp.getContext('2d'), W = sp.width, H = sp.height;
+    s.clearRect(0, 0, W, H);
+    const span = Math.round(data.fps * 12), from = Math.max(0, i - span);
+    const seg = counts.slice(from, i + 1); if (seg.length < 2) return;
+    const max = Math.max(4, ...counts);
+    s.beginPath();
+    seg.forEach((c, k) => { const x = k / span * W, y = H - 3 - c / max * (H - 8); k ? s.lineTo(x, y) : s.moveTo(x, y); });
+    s.strokeStyle = C.scan; s.lineWidth = 1.5 * (devicePixelRatio > 1 ? 2 : 1); s.stroke();
+  }
+
+  function boxLoop(now) {
+    const dt = Math.min((now - lastT) / 1000, .1); lastT = now;
+    const W = bcv.clientWidth, H = bcv.clientHeight;
+    bctx.clearRect(0, 0, W, H);
+    if (data && vid.duration) {
+      // object-fit: cover 的座標換算
+      const s = Math.max(W / data.w, H / data.h), ox = (W - data.w * s) / 2, oy = (H - data.h * s) / 2;
+      const M = t => ({ x: ox + t.x1 * s, y: oy + t.y1 * s, w: (t.x2 - t.x1) * s, h: (t.y2 - t.y1) * s });
+      const { i, list } = targetsAt(vid.currentTime);
+      if (i < lastFrame - 30) { lockId = null; ret = null; }
+      lastFrame = i;
+
+      // 掃描線
+      if (!reduce) {
+        scanY = (scanY + dt * H / 3.6) % (H * 1.15);
+        const g = bctx.createLinearGradient(0, scanY - 90, 0, scanY);
+        g.addColorStop(0, 'rgba(99,230,196,0)'); g.addColorStop(1, 'rgba(99,230,196,.09)');
+        bctx.fillStyle = g; bctx.fillRect(0, scanY - 90, W, 90);
+        bctx.fillStyle = C.scan; bctx.globalAlpha = .7; bctx.fillRect(0, scanY, W, 1.2); bctx.globalAlpha = 1;
+      }
+
+      // 鎖定：寬螢幕時只鎖右半邊的目標，避免被標題蓋住
+      const wide = W > 860;
+      const inText = t => wide && M(t).x + M(t).w / 2 < W * .48;
+      const cand = list.filter(t => !inText(t));
+      let locked = cand.find(t => t.id === lockId);
+      if (!locked) {
+        const goneLeft = list.some(t => t.id === lockId);       // 目標走進標題區：立刻換
+        if (lockId !== null && !lostAt && !goneLeft) lostAt = now;
+        if (lockId === null || goneLeft || now - lostAt > 500) {
+          const best = [...cand].sort((a, b) => b.conf - a.conf)[0];
+          lockId = best ? best.id : null; locked = best || null; lostAt = 0;
+          if (!best) ret = null;
+        }
+      } else lostAt = 0;
+
+      const fs = Math.max(9, Math.min(13, W / 120));
+      bctx.font = `500 ${fs}px ${css('--mono')}`; bctx.textBaseline = 'middle';
+      list.forEach(t => {
+        if (t.id === lockId) return;
+        const b = M(t), low = t.conf < LOW, col = low ? C.warn : C.scan;
+        const near = !reduce && Math.abs(scanY - (b.y + b.h / 2)) < b.h / 2 + 20;
+        bctx.globalAlpha = inText(t) ? .18 : near ? 1 : .72;      // 標題後方的框淡化
+        bctx.setLineDash(low ? [5, 4] : []); bctx.strokeStyle = col; bctx.lineWidth = 1.2;
+        bctx.strokeRect(b.x, b.y, b.w, b.h); bctx.setLineDash([]);
+        const label = `${NAMES[t.cls]} ${t.conf.toFixed(2)}`;
+        const tw = bctx.measureText(label).width + 10, th = fs + 7, ly = b.y - th < 0 ? b.y + b.h : b.y - th;
+        bctx.fillStyle = col; bctx.fillRect(b.x, ly, tw, th);
+        bctx.fillStyle = low ? C.text : C.deep; bctx.fillText(label, b.x + 5, ly + th / 2 + 1);
+        bctx.globalAlpha = 1;
+      });
+
+      if (locked || (ret && lostAt)) {
+        const b = locked ? M(locked) : { x: ret.x + 10, y: ret.y + 10, w: ret.w - 20, h: ret.h - 20 }, pad = Math.max(10, W / 100);
+        const goal = { x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 };
+        if (!ret) ret = { ...goal };
+        const k = reduce ? 1 : 1 - Math.pow(.0005, dt);
+        for (const p of ['x', 'y', 'w', 'h']) ret[p] += (goal[p] - ret[p]) * k;
+        const { x, y, w, h } = ret, cx = x + w / 2, cy = y + h / 2, lost = lostAt > 0;
+        bctx.strokeStyle = C.scan; bctx.lineWidth = 1;
+        bctx.globalAlpha = .5; bctx.strokeRect(x, y, w, h);
+        bctx.globalAlpha = .45; bctx.setLineDash([2, 4]); bctx.beginPath(); bctx.arc(cx, cy, Math.min(w, h) * .34, 0, 7); bctx.stroke(); bctx.setLineDash([]);
+        bctx.globalAlpha = .9; const cr = Math.min(w, h) * .08;
+        bctx.beginPath(); bctx.moveTo(cx - cr, cy); bctx.lineTo(cx + cr, cy); bctx.moveTo(cx, cy - cr); bctx.lineTo(cx, cy + cr); bctx.stroke();
+        bctx.globalAlpha = 1; bctx.shadowColor = C.scan; bctx.shadowBlur = 8;
+        corners(x, y, w, h, Math.min(w, h) * .2, lost ? C.warn : C.scan); bctx.shadowBlur = 0;
+
+        if (wide && locked) {
+          const rows = [`STATUS: ${lost ? 'SIGNAL LOST' : 'TARGET LOCKED'}`, `TRACKING_ID: ${tag(locked.id)}`, `CLASS: ${NAMES[locked.cls].toUpperCase()}`,
+            `POS_X: ${String(Math.round((locked.x1 + locked.x2) / 2 * SRC_SCALE)).padStart(4, '0')}`,
+            `POS_Y: ${String(Math.round((locked.y1 + locked.y2) / 2 * SRC_SCALE)).padStart(4, '0')}`,
+            `CONFIDENCE: ${(locked.conf * 100).toFixed(1)}%`];
+          const lh = fs * 1.75, pw = Math.max(...rows.map(r => bctx.measureText(r).width)) + fs * 2.2, ph = rows.length * lh + fs;
+          let px = x, py = y + h + fs;
+          if (py + ph > H - 230) py = y - ph - fs;               // 避開右下角統計面板
+          if (py < 70) { py = Math.max(70, y); px = x + w + fs; }
+          if (px + pw > W - 16) px = Math.max(16, x - pw - fs);
+          bctx.fillStyle = 'rgba(7,18,26,.72)'; bctx.fillRect(px, py, pw, ph);
+          bctx.fillStyle = lost ? C.warn : C.scan; bctx.fillRect(px, py, 2, ph);
+          rows.forEach((r, j) => { bctx.fillStyle = j === 0 ? (lost ? C.warn : C.scan) : C.text; bctx.fillText(r, px + fs * 1.1, py + fs * .5 + lh * (j + .5)); });
+        }
+      }
+
+      $('sNow').textContent = list.length;
+      $('sTotal').textContent = [...firstSeen.values()].filter(f => f <= i).length;
+      $('sLow').textContent = list.filter(t => t.conf < LOW).length;
+      $('sLock').textContent = locked ? tag(locked.id) : '—';
+      const t = vid.currentTime;
+      $('tc').textContent = `${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(0).padStart(2, '0')}`;
+      drawSpark(i);
+    }
+    requestAnimationFrame(boxLoop);
+  }
+  requestAnimationFrame(boxLoop);
+  vid.play().catch(() => {});
+})();
+</script>
+<script src="nav.js"></script>
+</body>
+</html>

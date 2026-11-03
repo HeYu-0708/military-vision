@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Military Vision 即時辨識</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* 版面：上方選畫面來源，中間全寬監控畫面（HUD），下方即時統計 */
+  :root{
+    --deep:#07121a;     /* 夜間監控底色 */
+    --panel:#0c1b25;    /* 狀態列 */
+    --line:#1d3442;     /* 分隔、外框 */
+    --scan:#63e6c4;     /* 掃描線、鎖定框 */
+    --text:#d6efe9;
+    --dim:#7ea4ab;
+    --warn:#e0564a;     /* 需人工確認、辨識中 */
+    --mono:"IBM Plex Mono", ui-monospace, Menlo, monospace;
+    --body:"Noto Sans TC", system-ui, sans-serif;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  [hidden]{display:none!important}
+  html,body{background:var(--deep);color:var(--text)}
+  body{font-family:var(--body);line-height:1.6;-webkit-font-smoothing:antialiased;
+       padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 48px}
+  a{color:inherit;text-decoration:none}
+  button,select{font:inherit;color:inherit}
+  :focus-visible{outline:2px solid var(--scan);outline-offset:3px}
+  .wrap{max-width:1360px;margin:0 auto;display:grid;gap:16px}
+
+  .head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px;padding-top:12px}
+  .head h1{font-size:clamp(1.5rem,2.6vw,2rem);font-weight:700;letter-spacing:.06em}
+  .head p{color:var(--dim);max-width:48em}
+  .model{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:.78rem;color:var(--dim);border:1px solid var(--line);background:var(--panel);padding:8px 12px}
+  .model i{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:none}
+  .model[data-state="ready"] i{background:var(--scan);box-shadow:0 0 8px var(--scan)}
+  .model[data-state="error"] i{background:var(--warn)}
+  .model b{color:var(--text);font-weight:500}
+  .prog{width:90px;height:3px;background:var(--line);flex:none}
+  .prog span{display:block;height:100%;width:0;background:var(--scan)}
+  .msg{border:1px solid var(--warn);background:rgba(224,86,74,.08);padding:12px 14px;font-size:.9rem}
+
+  /* 來源選擇列 */
+  .toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+  .sources{display:flex;border:1px solid var(--line)}
+  .sources button{display:grid;gap:0;text-align:left;padding:8px 16px;background:transparent;border:0;border-left:1px solid var(--line);cursor:pointer;color:var(--dim)}
+  .sources button:first-child{border-left:0}
+  .sources button b{font-weight:500;font-size:.92rem}
+  .sources button small{font-size:.74rem}
+  .sources button:hover{color:var(--text)}
+  .sources button[aria-pressed="true"]{color:var(--text);background:var(--panel);box-shadow:inset 0 -2px 0 var(--scan)}
+  .tright{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .tright label{display:flex;align-items:center;gap:8px;font-size:.86rem;color:var(--dim)}
+  .tright select{background:var(--deep);border:1px solid var(--line);padding:7px 10px;color:var(--text)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 20px;border:1px solid var(--line);background:transparent;cursor:pointer;font-size:.92rem;white-space:nowrap}
+  .btn:hover{border-color:var(--dim)}
+  .btn-primary{background:var(--scan);border-color:var(--scan);color:var(--deep);font-weight:500;min-width:120px}
+  .btn-primary:hover{background:var(--text);border-color:var(--text)}
+  .btn-primary.is-on{background:transparent;color:var(--warn);border-color:var(--warn)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+
+  /* 監控畫面 */
+  .stage{position:relative;width:100%;max-width:100%;aspect-ratio:16/9;background:#000;overflow:hidden;border:1px solid var(--line)}
+  .stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;filter:saturate(.8) contrast(1.04) brightness(.88)}
+  .stage canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+  .tint{position:absolute;inset:0;pointer-events:none;background:
+          repeating-linear-gradient(0deg, rgba(0,0,0,.16) 0 1px, transparent 1px 3px),
+          radial-gradient(ellipse at center, transparent 58%, rgba(4,12,18,.7) 100%),
+          linear-gradient(rgba(10,40,55,.18), rgba(10,40,55,.18))}
+  .hud{position:absolute;inset:0;pointer-events:none;font-family:var(--mono);letter-spacing:.14em;font-size:clamp(.6rem,1.05vw,.78rem);text-transform:uppercase}
+  .hud .tl{position:absolute;top:3.2%;left:2.2%}
+  .hud .tl b{display:block;font-weight:600;font-size:1.25em;letter-spacing:.22em;color:var(--text)}
+  .hud .tl span{color:var(--scan);opacity:.85}
+  .hud .tr{position:absolute;top:3.2%;right:2.2%;display:flex;align-items:center;gap:8px;color:var(--dim)}
+  .hud .tr i{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+  .hud .tr.on{color:var(--text)}
+  .hud .tr.on i{background:var(--warn);box-shadow:0 0 8px var(--warn);animation:blink 1.4s steps(1) infinite}
+  .hud .bl{position:absolute;bottom:3.2%;left:2.2%;color:var(--dim);display:grid;gap:.5em}
+  .hud .br{position:absolute;bottom:3.2%;right:2.2%;color:var(--dim);text-align:right;display:grid;gap:.5em}
+  .hud .br b{color:var(--scan);font-weight:500}
+  .idle{position:absolute;inset:0;display:grid;place-items:center;text-align:center;pointer-events:none;padding:16px}
+  .idle div{background:rgba(7,18,26,.78);border:1px solid var(--line);padding:16px 22px;display:grid;gap:4px;max-width:30em}
+  .idle b{font-weight:500}
+  .idle span{color:var(--dim);font-size:.88rem}
+
+  /* 狀態列 */
+  .bar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;background:var(--panel);border:1px solid var(--line)}
+  .stat{padding:12px 16px;border-right:1px solid var(--line);min-width:0}
+  .stat b{display:block;font-family:var(--mono);font-weight:500;font-size:clamp(1.3rem,2.4vw,1.9rem);line-height:1.1;font-variant-numeric:tabular-nums}
+  .stat span{font-size:.82rem;color:var(--dim)}
+  .stat.warn b{color:var(--warn)}
+  .stat.lock b{color:var(--scan)}
+  .controls{display:flex;align-items:center;gap:8px;padding:10px 14px}
+  .controls button{font-size:.88rem;background:transparent;border:1px solid var(--line);padding:8px 14px;cursor:pointer;white-space:nowrap}
+  .controls button:hover{border-color:var(--dim)}
+  .controls button[aria-pressed="false"]{color:var(--dim)}
+  .classes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));border:1px solid var(--line);border-top:0;background:var(--panel);margin-top:-16px}
+  .classes div{display:flex;align-items:center;gap:8px;padding:8px 14px;border-right:1px solid var(--line);font-size:.84rem;min-width:0}
+  .classes div:last-child{border-right:0}
+  .classes i{width:10px;height:10px;flex:none}
+  .classes span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .classes b{font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums}
+  .classes small{color:var(--dim);font-family:var(--mono)}
+  .classes .zero{opacity:.4}
+
+  .foot{font-size:.82rem;color:var(--dim);max-width:72ch}
+
+  @keyframes blink{50%{opacity:0}}
+  @media (max-width:860px){
+    .bar{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .stat:nth-child(2n){border-right:0}
+    .stat{border-bottom:1px solid var(--line)}
+    .controls{grid-column:1/-1;flex-wrap:wrap}
+    .classes{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .classes div{border-bottom:1px solid var(--line)}
+    .hud .bl span:not(:first-child){display:none}
+    .sources{width:100%}
+    .sources button{flex:1}
+    .sources button small{display:none}
+  }
+  @media (max-width:520px){ .hud .tl,.hud .bl{display:none} .tright{width:100%} .tright .btn{flex:1} }
+  @media (prefers-reduced-motion:reduce){ .hud .tr.on i{animation:none} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="sn" data-current="live"></header>
+
+  <section class="head">
+    <div>
+      <h1>即時辨識</h1>
+      <p>模型對畫面一幀一幀當場辨識並追蹤，右下角顯示目前的辨識速度。畫面來源可以選示範影片（模擬偵察車傳回的畫面）、螢幕擷取（例如正在播放的 YouTube 影片）或電腦鏡頭。</p>
+    </div>
+    <div class="model" id="model" data-state="loading" role="status"><i></i><span id="modelText">正在載入模型</span><div class="prog" id="prog"><span></span></div></div>
+  </section>
+
+  <div class="msg" id="err" hidden></div>
+
+  <div class="toolbar">
+    <div class="sources" role="group" aria-label="畫面來源">
+      <button type="button" data-src="demo" aria-pressed="true"><b>示範影片</b><small>模擬偵察車畫面</small></button>
+      <button type="button" data-src="screen" aria-pressed="false"><b>螢幕擷取</b><small>辨識另一個視窗</small></button>
+      <button type="button" data-src="camera" aria-pressed="false"><b>鏡頭</b><small>電腦或外接鏡頭</small></button>
+    </div>
+    <div class="tright">
+      <label id="speedBox">播放速度
+        <select id="speed"><option value="1">1×</option><option value="0.5">0.5×</option><option value="0.25">0.25×</option></select></label>
+      <button class="btn btn-primary" type="button" id="go" disabled>開始辨識</button>
+    </div>
+  </div>
+
+  <div class="stage" id="stage">
+    <video id="vid" muted playsinline preload="auto"></video>
+    <div class="tint"></div>
+    <canvas id="cv" aria-label="辨識畫面：點選目標可以鎖定追蹤"></canvas>
+    <div class="hud" aria-hidden="true">
+      <div class="tl"><b>Military Vision HUD</b><span id="srcTag">Visual tracking · Demo footage</span></div>
+      <div class="tr" id="liveTag"><i></i><span>Standby</span></div>
+      <div class="bl"><span>Detector: YOLO11m · Tracker: ByteTrack</span><span>Click a target to lock</span><span id="tc">T+00:00</span></div>
+      <div class="br"><span><b id="fps">—</b> FPS</span><span id="ms">— ms / frame</span></div>
+    </div>
+    <div class="idle" id="idle"><div><b id="idleTitle">按「開始辨識」</b><span id="idleText">模型會對示範影片逐幀辨識。</span></div></div>
+  </div>
+
+  <section class="bar" aria-label="即時統計">
+    <div class="stat"><b id="sNow">0</b><span>畫面中目標</span></div>
+    <div class="stat"><b id="sTotal">0</b><span>累計目標（不重複 ID）</span></div>
+    <div class="stat warn"><b id="sLow">0</b><span>需人工確認</span></div>
+    <div class="stat lock"><b id="sLock">—</b><span>鎖定目標</span></div>
+    <div class="controls">
+      <button id="bBox" type="button" aria-pressed="true">偵測框</button>
+      <button id="bScan" type="button" aria-pressed="true">掃描線</button>
+      <button id="bReset" type="button">重設計數</button>
+    </div>
+  </section>
+  <section class="classes" id="classes" aria-label="各類別：畫面中 / 累計"></section>
+
+  <p class="foot">所有辨識都在這台電腦的瀏覽器裡即時運算，畫面不會上傳。信心度低於 0.6 的目標以虛線框標示，代表需要人工確認。辨識速度取決於電腦效能：支援 WebGPU 的瀏覽器會快很多；若速度太慢，示範影片可以調成 0.5× 播放。</p>
+</div>
+
+<script src="nav.js"></script>
+<script src="yolo.js"></script>
+<script src="log.js"></script>
+<script src="track.js"></script>
+<script>
+(() => {
+  const Y = window.MV_YOLO, TR = window.MV_TRACK, CL = Y.CLASSES;
+  const $ = id => document.getElementById(id);
+  const vid = $('vid'), cv = $('cv'), ctx = cv.getContext('2d');
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const C = { scan: css('--scan'), text: css('--text'), warn: css('--warn'), deep: css('--deep') };
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const LOW = 0.6, MIN_HITS = 3;
+  let CONF = 0.4;   // 載入模型後改用 model.json 的設定
+  const SRC = {
+    demo:   { tag: 'Demo footage',   title: '按「開始辨識」', text: '模型會對示範影片逐幀辨識。' },
+    screen: { tag: 'Screen capture', title: '按「開始辨識」後選擇要辨識的視窗', text: '例如先開一個 YouTube 視窗播放閱兵或軍事影片，再選擇那個視窗。' },
+    camera: { tag: 'Camera',         title: '按「開始辨識」後允許使用鏡頭', text: '可以對著軍事模型、印出來的照片或手機播放的影片。' },
+  };
+  let source = 'demo', ready = false, running = false, stream = null, demoUrl = null;
+  let tracker = TR.create({ conf: CONF, minHits: MIN_HITS }), objs = [], seen = new Map();
+  let showBox = true, showScan = !reduce, lockId = null, lostAt = 0, ret = null, scanY = 0, lastT = performance.now();
+  let fpsHist = [], msHist = [], t0 = 0;
+
+  /* ---------- 模型 ---------- */
+  const setModel = (s, h) => { $('model').dataset.state = s; $('modelText').innerHTML = h; };
+  Y.load('best.onnx', (g, t) => { $('prog').firstElementChild.style.width = (g / t * 100) + '%'; setModel('loading', `正在載入模型 ${(g / 1048576) | 0} / ${(t / 1048576) | 0} MB`); })
+    .then(({ backend, info }) => {
+      ready = true; $('prog').hidden = true; $('go').disabled = false;
+      setModel('ready', `<b>${info.name}</b> · ${backend === 'webgpu' ? 'WebGPU' : 'WASM（CPU）'} · 已就緒`);
+      if (info.conf) { CONF = info.conf; resetCounts(); }
+      if (backend !== 'webgpu') showErr('這台電腦的瀏覽器不支援 WebGPU，改用 CPU 計算，速度會比較慢。建議用最新版 Chrome；示範影片可以調成 0.5× 或 0.25× 播放。', true);
+    })
+    .catch(e => {
+      $('prog').hidden = true; setModel('error', '模型載入失敗');
+      showErr(/onnxruntime|無法載入/.test(e.message) ? '無法載入辨識引擎。請確認電腦有連上網路；若要離線展示，請先執行 get_ort.py。'
+        : /找不到模型/.test(e.message) ? '找不到 best.onnx。請把模型檔放到網站資料夾裡的 models 資料夾。' : e.message);
+    });
+  function showErr(t, soft) { $('err').textContent = t; $('err').hidden = false; $('err').style.borderColor = soft ? 'var(--line)' : ''; }
+
+  /* ---------- 示範影片：先讀進記憶體（python -m http.server 不支援影片跳轉） ---------- */
+  async function loadDemo() {
+    if (!demoUrl) { const r = await fetch('patrol.mp4'); if (!r.ok) throw new Error('找不到示範影片 patrol.mp4。'); demoUrl = URL.createObjectURL(await r.blob()); }
+    stopStream(); vid.srcObject = null;
+    if (vid.src !== demoUrl) vid.src = demoUrl;
+    vid.loop = false; vid.playbackRate = +$('speed').value;
+    await new Promise(ok => vid.readyState >= 2 ? ok() : vid.addEventListener('loadeddata', ok, { once: true }));
+  }
+  loadDemo().catch(e => showErr(e.message));
+
+  /* ---------- 切換來源 ---------- */
+  document.querySelectorAll('.sources button').forEach(b => b.onclick = () => {
+    if (b.dataset.src === source) return;
+    stop(); source = b.dataset.src; objs = [];
+    document.querySelectorAll('.sources button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    $('speedBox').hidden = source !== 'demo';
+    $('srcTag').textContent = 'Visual tracking · ' + SRC[source].tag;
+    $('idleTitle').textContent = SRC[source].title; $('idleText').textContent = SRC[source].text; $('idle').hidden = false;
+    if (source === 'demo') loadDemo().catch(e => showErr(e.message)); else { vid.pause(); vid.removeAttribute('src'); vid.load(); }
+  });
+  $('speed').onchange = () => { vid.playbackRate = +$('speed').value; };
+
+  function stopStream() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
+
+  async function start() {
+    $('err').hidden = true;
+    try {
+      if (source === 'demo') { await loadDemo(); vid.currentTime = 0; }
+      else {
+        if (!window.isSecureContext) throw new Error('鏡頭和螢幕擷取需要用 http://localhost 開啟網站（用 python -m http.server），不能直接雙擊 HTML 檔。');
+        stream = source === 'camera'
+          ? await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
+          : await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
+        stream.getVideoTracks()[0].addEventListener('ended', stop);   // 使用者按了「停止分享」
+        vid.removeAttribute('src'); vid.srcObject = stream;
+      }
+      await vid.play();
+    } catch (e) {
+      const m = e.name === 'NotAllowedError' ? (source === 'camera' ? '沒有取得鏡頭權限。請在瀏覽器網址列左邊的設定允許使用鏡頭，再按一次「開始辨識」。' : '已取消螢幕擷取。要辨識其他視窗時，再按一次「開始辨識」並選擇視窗。')
+        : e.name === 'NotFoundError' ? '找不到鏡頭。請確認鏡頭已接上，且沒有被其他程式（例如視訊會議）佔用。' : e.message;
+      showErr(m, e.name === 'NotAllowedError' && source === 'screen'); stopStream(); return;
+    }
+    resetCounts(); running = true; t0 = performance.now();
+    $('go').textContent = '停止辨識'; $('go').classList.add('is-on'); $('idle').hidden = true;
+    $('liveTag').classList.add('on'); $('liveTag').lastElementChild.textContent = 'Live inference';
+    inferLoop();
+  }
+  function stop() {
+    // 辨識超過 3 秒才存紀錄給統計分析頁
+    if (running && performance.now() - t0 > 3000) {
+      const tr = tracker.tracks(), counts = CL.map((_, k) => tr.filter(t => t.cls === k).length);
+      const avg = fpsHist.length ? fpsHist.reduce((a, b) => a + b, 0) / fpsHist.length : 0;
+      MV_LOG.add({ type: 'live', name: { demo: '示範影片', screen: '螢幕擷取', camera: '鏡頭' }[source], source, counts,
+        review: tr.filter(t => t.meanConf < LOW).length, ms: msHist.length ? Math.round(msHist.reduce((a, b) => a + b, 0) / msHist.length) : null,
+        fps: avg ? +(1000 / avg).toFixed(1) : null, backend: Y.backend, duration: Math.round((performance.now() - t0) / 1000),
+        confs: tr.map(t => +t.meanConf.toFixed(3)) });
+    }
+    running = false; stopStream(); if (source === 'demo') vid.pause();
+    $('go').textContent = '開始辨識'; $('go').classList.remove('is-on');
+    $('liveTag').classList.remove('on'); $('liveTag').lastElementChild.textContent = 'Standby';
+    if (source !== 'demo') { objs = []; $('idle').hidden = false; }
+  }
+  $('go').onclick = () => running ? stop() : start();
+  vid.addEventListener('ended', () => { if (running && source === 'demo') { resetCounts(); vid.currentTime = 0; vid.play(); } });
+
+  function resetCounts() { tracker = TR.create({ conf: CONF, minHits: MIN_HITS }); objs = []; seen = new Map(); lockId = null; ret = null; fpsHist = []; msHist = []; }
+  $('bReset').onclick = resetCounts;
+
+  /* ---------- 辨識迴圈：一次處理一幀，處理完立刻抓下一幀 ---------- */
+  async function inferLoop() {
+    while (running) {
+      if (!vid.videoWidth || vid.readyState < 2 || vid.paused) { await new Promise(r => requestAnimationFrame(r)); continue; }
+      const tStart = performance.now();
+      const { out, meta, ms } = await Y.infer(vid, vid.videoWidth, vid.videoHeight);
+      if (!running) break;
+      const dets = Y.decode(out, meta, 0.1, 0.45);
+      objs = tracker.step(performance.now() / 1000, dets);
+      objs.forEach(o => { if (!seen.has(o.id)) seen.set(o.id, o.cls); });
+      fpsHist.push(performance.now() - tStart); msHist.push(ms);
+      if (fpsHist.length > 20) { fpsHist.shift(); msHist.shift(); }
+      await new Promise(r => setTimeout(r, 0));   // 讓畫面有機會更新
+    }
+  }
+
+  /* ---------- 畫面 ---------- */
+  function resize() {
+    const r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+    cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  new ResizeObserver(resize).observe(cv); resize();
+
+  const tag = id => 'SD-' + String(id).padStart(2, '0');
+  function corners(x, y, w, h, len, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.beginPath();
+    [[x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1]].forEach(([cx, cy, dx, dy]) => {
+      ctx.moveTo(cx, cy + dy * len); ctx.lineTo(cx, cy); ctx.lineTo(cx + dx * len, cy); });
+    ctx.stroke();
+  }
+
+  function draw(now) {
+    const dt = Math.min((now - lastT) / 1000, .1); lastT = now;
+    const W = cv.clientWidth, H = cv.clientHeight;
+    ctx.clearRect(0, 0, W, H);
+    const vw = vid.videoWidth, vh = vid.videoHeight;
+    // object-fit: contain 的換算
+    const s = vw ? Math.min(W / vw, H / vh) : 1, ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
+    const M = o => ({ x: ox + o.x * s, y: oy + o.y * s, w: o.w * s, h: o.h * s });
+
+    if (showScan && running) {
+      scanY = (scanY + dt * H / 3.2) % (H * 1.15);
+      const g = ctx.createLinearGradient(0, scanY - 70, 0, scanY);
+      g.addColorStop(0, 'rgba(99,230,196,0)'); g.addColorStop(1, 'rgba(99,230,196,.10)');
+      ctx.fillStyle = g; ctx.fillRect(0, scanY - 70, W, 70);
+      ctx.fillStyle = C.scan; ctx.globalAlpha = .75; ctx.fillRect(0, scanY, W, 1.2); ctx.globalAlpha = 1;
+    }
+
+    const list = objs;
+    // 鎖定：目標消失 0.6 秒後改鎖信心度最高的
+    let locked = list.find(o => o.id === lockId);
+    if (!locked) {
+      if (lockId !== null && !lostAt) lostAt = now;
+      if (lockId === null || now - lostAt > 600) { const best = [...list].sort((a, b) => b.conf - a.conf)[0]; lockId = best ? best.id : null; locked = best; lostAt = 0; if (!best) ret = null; }
+    } else lostAt = 0;
+
+    const fs = Math.max(9, Math.min(13, W / 105));
+    ctx.font = `600 ${fs}px ${css('--mono')}`; ctx.textBaseline = 'middle';
+    if (showBox) list.forEach(o => {
+      if (o.id === lockId) return;
+      const b = M(o), c = CL[o.cls], low = o.conf < LOW;
+      ctx.strokeStyle = c.color; ctx.lineWidth = 2; ctx.setLineDash(low ? [6, 5] : []);
+      ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]);
+      const t = `${c.name} ${tag(o.id)} ${o.conf.toFixed(2)}${low ? ' ?' : ''}`, tw = ctx.measureText(t).width + 10, th = fs + 8;
+      const ly = b.y - th < 0 ? b.y + b.h : b.y - th;
+      ctx.fillStyle = c.color; ctx.fillRect(b.x, ly, tw, th); ctx.fillStyle = c.ink; ctx.fillText(t, b.x + 5, ly + th / 2 + 1);
+    });
+
+    if (locked || (ret && lostAt)) {
+      const pad = Math.max(10, W / 90);
+      if (locked) {
+        const b = M(locked), goal = { x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 };
+        if (!ret) ret = { ...goal };
+        const k = reduce ? 1 : 1 - Math.pow(.0005, dt);
+        for (const p of ['x', 'y', 'w', 'h']) ret[p] += (goal[p] - ret[p]) * k;
+      }
+      const { x, y, w, h } = ret, cx = x + w / 2, cy = y + h / 2, lost = !locked;
+      ctx.strokeStyle = C.scan; ctx.lineWidth = 1;
+      ctx.globalAlpha = .55; ctx.strokeRect(x, y, w, h);
+      ctx.globalAlpha = .45; ctx.setLineDash([2, 4]); ctx.beginPath(); ctx.arc(cx, cy, Math.min(w, h) * .34, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      ctx.globalAlpha = .9; const cr = Math.min(w, h) * .08;
+      ctx.beginPath(); ctx.moveTo(cx - cr, cy); ctx.lineTo(cx + cr, cy); ctx.moveTo(cx, cy - cr); ctx.lineTo(cx, cy + cr); ctx.stroke();
+      ctx.globalAlpha = 1; ctx.shadowColor = C.scan; ctx.shadowBlur = 8;
+      corners(x, y, w, h, Math.min(w, h) * .2, lost ? C.warn : C.scan); ctx.shadowBlur = 0;
+
+      if (locked) {
+        const narrow = W < 600;
+        let rows = [`STATUS: TARGET LOCKED`, `TRACKING_ID: ${tag(locked.id)}`, `CLASS: ${CL[locked.cls].name.toUpperCase()}`,
+          `POS_X: ${String(Math.round(locked.x + locked.w / 2)).padStart(4, '0')}`, `POS_Y: ${String(Math.round(locked.y + locked.h / 2)).padStart(4, '0')}`,
+          `CONFIDENCE: ${(locked.conf * 100).toFixed(1)}%`];
+        if (narrow) rows = [rows[1], rows[2], rows[5]];
+        const pfs = Math.max(8, W / 105), lh = pfs * 1.75;
+        ctx.font = `500 ${pfs}px ${css('--mono')}`;
+        const pw = Math.max(...rows.map(r => ctx.measureText(r).width)) + pfs * 2.2, ph = rows.length * lh + pfs;
+        let px = x, py = y + h + pfs;
+        if (py + ph > H - 8) py = y - ph - pfs;
+        if (py < 8) { py = Math.max(8, y); px = x + w + pfs; }
+        if (px + pw > W - 8) px = Math.max(8, x - pw - pfs);
+        ctx.fillStyle = 'rgba(7,18,26,.75)'; ctx.fillRect(px, py, pw, ph);
+        ctx.fillStyle = C.scan; ctx.fillRect(px, py, 2, ph);
+        rows.forEach((r, j) => { ctx.fillStyle = j === 0 && !narrow ? C.scan : C.text; ctx.fillText(r, px + pfs * 1.1, py + pfs * .5 + lh * (j + .5)); });
+      }
+    }
+
+    // 統計
+    $('sNow').textContent = list.length;
+    $('sTotal').textContent = seen.size;
+    $('sLow').textContent = list.filter(o => o.conf < LOW).length;
+    $('sLock').textContent = locked ? tag(locked.id) : '—';
+    const tot = CL.map(() => 0), cur = CL.map(() => 0);
+    seen.forEach(c => tot[c]++); list.forEach(o => cur[o.cls]++);
+    $('classes').innerHTML = CL.map((c, k) => `<div class="${tot[k] ? '' : 'zero'}"><i style="background:${c.color}"></i><span>${c.zh} <small>${c.name}</small></span><b>${cur[k]}</b><small>/ ${tot[k]}</small></div>`).join('');
+    if (fpsHist.length) {
+      const avg = fpsHist.reduce((a, b) => a + b, 0) / fpsHist.length, avgMs = msHist.reduce((a, b) => a + b, 0) / msHist.length;
+      $('fps').textContent = (1000 / avg).toFixed(1); $('ms').textContent = `${Math.round(avgMs)} ms / frame`;
+    }
+    const el = running ? (performance.now() - t0) / 1000 : 0;
+    $('tc').textContent = `T+${String(Math.floor(el / 60)).padStart(2, '0')}:${String(Math.floor(el % 60)).padStart(2, '0')}`;
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
+  // 點選目標鎖定
+  cv.addEventListener('click', e => {
+    const vw = vid.videoWidth, vh = vid.videoHeight; if (!vw) return;
+    const r = cv.getBoundingClientRect(), s = Math.min(r.width / vw, r.height / vh), ox = (r.width - vw * s) / 2, oy = (r.height - vh * s) / 2;
+    const mx = (e.clientX - r.left - ox) / s, my = (e.clientY - r.top - oy) / s, pad = 8 / s;
+    const hit = objs.filter(o => mx >= o.x - pad && mx <= o.x + o.w + pad && my >= o.y - pad && my <= o.y + o.h + pad).sort((a, b) => a.w * a.h - b.w * b.h)[0];
+    if (hit) { lockId = hit.id; lostAt = 0; }
+  });
+
+  const toggle = (btn, fn) => btn.onclick = () => { const v = btn.getAttribute('aria-pressed') !== 'true'; btn.setAttribute('aria-pressed', v); fn(v); };
+  toggle($('bBox'), v => showBox = v);
+  toggle($('bScan'), v => showScan = v);
+  if (reduce) $('bScan').setAttribute('aria-pressed', 'false');
+})();
+</script>
+</body>
+</html>
